@@ -154,7 +154,7 @@ export default function Dashboard() {
         })
       }, 500)
 
-      const response = await fetch("http://localhost:8000/process", {
+      const response = await fetch("https://vizionarybackendserver.onrender.com/process", {
       // Parse the full CSV file
         method: "POST",
         body: formData,
