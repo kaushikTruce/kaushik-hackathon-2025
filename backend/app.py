@@ -7,9 +7,8 @@ import os
 from dotenv import load_dotenv
 import traceback
 import logging
-import sqlparse
 import re
-from sqlalchemy import create_engine, text, inspect
+from pymongo import MongoClient
 from waitress import serve
 
 # Configure logging
@@ -19,12 +18,9 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# MySQL Configuration
-MYSQL_USERNAME = os.getenv('MYSQL_USERNAME')
-MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD')
+# MongoDB Configuration
+MONGODB_URI = os.getenv('MONGODB_URI')
 DB_NAME = os.getenv('DB_NAME')
-MYSQL_PORT = int(os.getenv('MYSQL_PORT', '3306'))
-MYSQL_HOST = os.getenv('MYSQL_HOST', 'localhost')
 
 # Configure Gemini
 try:
@@ -38,83 +34,82 @@ except Exception as e:
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
-def get_db_engine():
-    """Get SQLAlchemy engine with connection to MySQL"""
-    connection_string = f"mysql+pymysql://{MYSQL_USERNAME}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{DB_NAME}"
-    return create_engine(connection_string)
+def get_mongodb_client():
+    """Get MongoDB client connection"""
+    return MongoClient(MONGODB_URI)
 
 # Test the database connection on startup
 try:
-    engine = get_db_engine()
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))
+    client = get_mongodb_client()
+    db = client[DB_NAME]
+    # Simple ping to verify connection
+    client.admin.command('ping')
     logger.info("Database connection successful")
 except Exception as e:
     logger.error(f"Database connection failed: {str(e)}")
-    logger.error("Make sure MySQL is running and credentials are correct")
+    logger.error("Make sure MongoDB is running and credentials are correct")
 
-def sanitize_sql(sql_text):
-    """Sanitize SQL query from LLM output"""
-    # Extract SQL if it's wrapped in code blocks or other markers
-    if "```sql" in sql_text:
-        sql_parts = sql_text.split("```sql")
-        if len(sql_parts) > 1:
-            sql_text = sql_parts[1].split("```")[0].strip()
-    elif "```" in sql_text:
-        sql_parts = sql_text.split("```")
-        for part in sql_parts:
-            if "SELECT" in part.upper() or "WITH" in part.upper():
-                sql_text = part.strip()
+def sanitize_query(query_text):
+    """Sanitize query from LLM output"""
+    # Extract query if it's wrapped in code blocks or other markers
+    if "```" in query_text:
+        query_parts = query_text.split("```")
+        for part in query_parts:
+            if part.strip() and not part.strip().startswith('```'):
+                query_text = part.strip()
                 break
     
+    # Remove any language identifiers at the beginning (like "json")
+    query_text = re.sub(r'^json\s+', '', query_text)
+    
     # Remove any explanatory text or comments
-    lines = sql_text.split('\n')
-    sql_lines = []
+    lines = query_text.split('\n')
+    query_lines = []
     for line in lines:
         if not line.strip().startswith('--'):
-            sql_lines.append(line)
+            query_lines.append(line)
     
-    sql_text = '\n'.join(sql_lines)
+    query_text = '\n'.join(query_lines)
     
-    return sql_text
+    return query_text
 
-def validate_sql(sql_query):
-    """Validate SQL query using sqlparse"""
+def validate_query(query_json):
+    """Validate MongoDB query"""
     try:
-        # Parse the SQL to check if it's valid syntax
-        parsed = sqlparse.parse(sql_query)
-        if not parsed or not parsed[0].tokens:
-            return False, "Empty or invalid SQL query"
+        # Parse the JSON to check if it's valid syntax
+        if not query_json:
+            return False, "Empty or invalid MongoDB query"
         
-        # Basic check to ensure it's a SELECT query
-        stmt_type = parsed[0].get_type()
-        if stmt_type.upper() != 'SELECT':
-            return False, f"Expected SELECT query, got {stmt_type}"
+        # Handle both find query (dict) and aggregation pipeline (list) formats
+        if not isinstance(query_json, dict) and not isinstance(query_json, list):
+            return False, "Query must be a valid JSON object or array"
         
-        return True, "Valid SQL query"
+        return True, "Valid MongoDB query"
     except Exception as e:
-        return False, f"SQL validation error: {str(e)}"
+        return False, f"Query validation error: {str(e)}"
 
-def csv_to_mysql_table(df, table_name):
-    """Create a new table in MySQL and populate it with CSV data"""
-    engine = get_db_engine()
+def csv_to_mongodb_collection(df, collection_name):
+    """Create a new collection in MongoDB and populate it with CSV data"""
+    client = get_mongodb_client()
+    db = client[DB_NAME]
     
-    # Clean table name (remove special chars and spaces)
-    clean_table_name = re.sub(r'[^a-zA-Z0-9_]', '', table_name)
-    clean_table_name = f"csv_{clean_table_name.lower()}"
+    # Clean collection name (remove special chars and spaces)
+    clean_collection_name = re.sub(r'[^a-zA-Z0-9_]', '', collection_name)
+    clean_collection_name = f"csv_{clean_collection_name.lower()}"
     
-    # Check if table exists and drop it
-    inspector = inspect(engine)
-    if clean_table_name in inspector.get_table_names():
-        with engine.connect() as conn:
-            conn.execute(text(f"DROP TABLE {clean_table_name}"))
-            conn.commit()
+    # Check if collection exists and drop it
+    if clean_collection_name in db.list_collection_names():
+        db[clean_collection_name].drop()
     
-    # Create table and insert data
-    df.to_sql(clean_table_name, engine, if_exists='replace', index=False)
+    # Convert DataFrame to list of records
+    records = df.to_dict(orient='records')
     
-    # Return the clean table name
-    return clean_table_name
+    # Insert data into MongoDB
+    if records:
+        db[clean_collection_name].insert_many(records)
+    
+    # Return the clean collection name
+    return clean_collection_name
 
 @app.route('/process', methods=['POST'])
 def process_file():
@@ -141,23 +136,23 @@ def process_file():
         headers = df.columns.tolist()
         sample_data = df.head(4).to_dict(orient='records')
         
-        # Create table name from filename
-        table_name = os.path.splitext(file.filename)[0]
+        # Create collection name from filename
+        collection_name = os.path.splitext(file.filename)[0]
         
-        # Create MySQL table and populate with CSV data
+        # Create MongoDB collection and populate with CSV data
         try:
-            mysql_table_name = csv_to_mysql_table(df, table_name)
-            logger.info(f"Created MySQL table: {mysql_table_name}")
+            mongodb_collection_name = csv_to_mongodb_collection(df, collection_name)
+            logger.info(f"Created MongoDB collection: {mongodb_collection_name}")
         except Exception as e:
-            logger.error(f"Error creating MySQL table: {str(e)}")
-            return jsonify({'error': f'Error creating MySQL table: {str(e)}'}), 500
+            logger.error(f"Error creating MongoDB collection: {str(e)}")
+            return jsonify({'error': f'Error creating MongoDB collection: {str(e)}'}), 500
         
         # Get the prompt from the form data
         user_prompt = request.form.get('prompt', 'No prompt provided')
         
-        # Create a context-aware prompt for Gemini to generate SQL
+        # Create a context-aware prompt for Gemini to generate MongoDB query
         gemini_prompt = f"""
-        I have a MySQL table named '{mysql_table_name}' with the following columns: {headers}.
+        I have a MongoDB collection named '{mongodb_collection_name}' with the following fields: {headers}.
         
         Here's a sample of the data:
         {json.dumps(sample_data, indent=2)}
@@ -165,12 +160,24 @@ def process_file():
         Based on this data, please {user_prompt}.
         
         Your task is to:
-        1. Write a SQL query (MySQL dialect) that answers this request
-        2. ONLY return the SQL query, with no explanation or other text
-        3. Make sure it's a properly formatted, efficient SQL query
-        4. The query must only use SELECT statements (no INSERT, UPDATE, DELETE, etc.)
+        1. Write a MongoDB query that answers this request
+        2. You can use either a find query or an aggregation pipeline, whichever is more appropriate
+        3. Return ONLY the MongoDB query as a JSON object or array
+        4. Make sure it's a properly formatted, efficient MongoDB query
         
-        Return ONLY the SQL query with nothing else.
+        For find queries, return in this format:
+        {{
+          "filter": {{ "age": {{ "$gt": 30 }} }},
+          "sort": {{ "name": 1 }}
+        }}
+        
+        For aggregation pipelines, return an array of stages:
+        [
+          {{ "$match": {{ "age": {{ "$gt": 30 }} }} }},
+          {{ "$group": {{ "_id": "$city", "count": {{ "$sum": 1 }} }} }}
+        ]
+        
+        Return ONLY the MongoDB query JSON with nothing else.
         """
         
         # Get response from Gemini
@@ -182,46 +189,87 @@ def process_file():
             logger.error(f"Error getting response from Gemini: {str(e)}")
             return jsonify({'error': f'Error getting response from Gemini: {str(e)}'}), 500
         
-        # Sanitize the SQL query
-        sql_query = sanitize_sql(response_text)
-        logger.info(f"Sanitized SQL query: {sql_query}")
+        # Sanitize the MongoDB query
+        clean_query_text = sanitize_query(response_text)
+        logger.info(f"Sanitized MongoDB query: {clean_query_text}")
         
-        # Validate the SQL query
-        is_valid, validation_message = validate_sql(sql_query)
-        if not is_valid:
-            logger.error(f"Invalid SQL query: {validation_message}")
+        # Parse the JSON query
+        try:
+            query_params = json.loads(clean_query_text)
+        except Exception as e:
+            logger.error(f"Error parsing MongoDB query JSON: {str(e)}")
             return jsonify({
-                'error': f'Invalid SQL query: {validation_message}',
-                'raw_query': sql_query
+                'error': f'Error parsing MongoDB query JSON: {str(e)}',
+                'raw_query': clean_query_text
             }), 400
         
-        print(f"Validated SQL Query: {sql_query}")
-        # Execute the SQL query and get results as a pandas DataFrame
+        # Validate the MongoDB query
+        is_valid, validation_message = validate_query(query_params)
+        if not is_valid:
+            logger.error(f"Invalid MongoDB query: {validation_message}")
+            return jsonify({
+                'error': f'Invalid MongoDB query: {validation_message}',
+                'raw_query': clean_query_text
+            }), 400
+        
+        print(f"Validated MongoDB Query: {clean_query_text}")
+        
+        # Execute the MongoDB query and get results
         try:
-            engine = get_db_engine()
-            with engine.connect() as conn:
-                result_df = pd.read_sql(sql_query, conn)
+            client = get_mongodb_client()
+            db = client[DB_NAME]
+            collection = db[mongodb_collection_name]
             
-            # Convert DataFrame to dict for JSON response
-            result_data = result_df.to_dict(orient='records')
-            result_headers = result_df.columns.tolist()
+            # Check if query is an aggregation pipeline (list) or find query (dict)
+            if isinstance(query_params, list):
+                # Execute aggregation pipeline
+                cursor = collection.aggregate(query_params)
+                result_data = list(cursor)
+            else:
+                # Extract query parameters for find
+                filter_params = query_params.get('filter', {})
+                sort_params = query_params.get('sort', None)
+                limit_value = query_params.get('limit', 0)
+                projection = query_params.get('projection', None)
+                
+                # Execute find query
+                cursor = collection.find(filter_params, projection)
+                
+                # Apply sort if specified
+                if sort_params:
+                    cursor = cursor.sort(list(sort_params.items()))
+                
+                # Apply limit if specified
+                if limit_value > 0:
+                    cursor = cursor.limit(limit_value)
+                
+                # Convert cursor to list
+                result_data = list(cursor)
             
-            logger.info(f"SQL query executed successfully, returned {len(result_df)} rows")
+            # MongoDB adds _id field that's not JSON serializable, so convert it
+            for doc in result_data:
+                if '_id' in doc:
+                    doc['_id'] = str(doc['_id'])
+            
+            # Get result headers (fields)
+            result_headers = list(result_data[0].keys()) if result_data else []
+            
+            logger.info(f"MongoDB query executed successfully, returned {len(result_data)} documents")
             
             return jsonify({
                 'message': 'File processed successfully',
-                'table_name': mysql_table_name,
+                'collection_name': mongodb_collection_name,
                 'original_headers': headers,
-                'sql_query': sql_query,
+                'mongodb_query': query_params,
                 'result_headers': result_headers,
                 'result_data': result_data
             })
             
         except Exception as e:
-            logger.error(f"Error executing SQL query: {str(e)}")
+            logger.error(f"Error executing MongoDB query: {str(e)}")
             return jsonify({
-                'error': f'Error executing SQL query: {str(e)}',
-                'sql_query': sql_query
+                'error': f'Error executing MongoDB query: {str(e)}',
+                'mongodb_query': query_params
             }), 500
 
     except Exception as e:
