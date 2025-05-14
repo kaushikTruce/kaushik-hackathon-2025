@@ -114,7 +114,7 @@ const formatNumber = (value: number) => {
   } else if (value >= 1000) {
     return (value / 1000).toFixed(1) + "K"
   }
-  return value.toString()
+  return value.toFixed(1);
 }
 
 export function ChartDisplay({ resultData, labelKey, dataKey }: ChartDisplayProps) {
