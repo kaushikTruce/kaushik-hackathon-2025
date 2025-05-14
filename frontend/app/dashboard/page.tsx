@@ -409,7 +409,7 @@ export default function Dashboard() {
                     <AlertDialogDescription>
                       Before proceeding, please ensure your CSV file is properly formatted for optimal LLM processing:
                     </AlertDialogDescription>
-                    <ul className="list-disc pl-6 space-y-2 text-muted-foreground text-sm">
+                    <ul className="list-disc pl-6 space-y-2 text-muted-foreground text-sm text-left">
                       <li>All column headers should be unique and descriptive</li>
                       <li>Data should be consistent and properly formatted</li>
                       <li>No empty rows or columns</li>
@@ -423,14 +423,14 @@ export default function Dashboard() {
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                    <AlertDialogCancel className="transition-all duration-200 hover:bg-gray-100">
+                    <AlertDialogCancel className="transition-all duration-200 hover:bg-gray-100 w-full md:w-auto">
                       Cancel
                     </AlertDialogCancel>
                   </motion.div>
                   <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
                     <AlertDialogAction
                       onClick={handleConfirmSubmit}
-                      className="bg-purple-600 hover:bg-purple-700 transition-all duration-200"
+                      className="bg-purple-600 hover:bg-purple-700 transition-all duration-200 w-full md:w-auto"
                     >
                       Proceed
                     </AlertDialogAction>
