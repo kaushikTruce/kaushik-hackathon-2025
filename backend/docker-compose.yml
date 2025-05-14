@@ -1,0 +1,41 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: csv_analysis_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-csv_data}
+      MYSQL_USER: ${MYSQL_USERNAME:-user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: flask_csv_analysis
+    restart: always
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - DB_NAME=${DB_NAME:-csv_data}
+      - MYSQL_USERNAME=${MYSQL_USERNAME:-user}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-password}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - .:/app
+
+volumes:
+  mysql_data:
