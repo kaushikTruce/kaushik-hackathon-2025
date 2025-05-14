@@ -6,13 +6,12 @@ DataVizPrompt is an interactive tool that allows users to upload CSV/Excel files
 
 ## 🚀 Features
 
-- Upload your own dataset (CSV/XLSX)
-- Automatically extract column names
+- Upload your own dataset in CSV format
+- Automatically detect and extract field (column) names
 - Ask questions in plain English
-- LLM converts your query to SQL
-- SQL runs on your dataset in a Cloud SQL database
-- Dynamic charts (bar, line, pie, etc.) rendered in the browser
-- LLM result caching with Redis to reduce API calls
+- An LLM translates your question into MongoDB queries
+- Queries are executed on your dataset in a Cloud MongoDB database
+- View dynamic charts (bar, line, pie, etc.) directly in the browser
 
 ---
 
@@ -20,12 +19,11 @@ DataVizPrompt is an interactive tool that allows users to upload CSV/Excel files
 
 | Layer     | Tech                    |
 |-----------|-------------------------|
-| Frontend  | Next.js + Chart.js or Plotly |
-| Backend   | Python (Flask) |
-| LLM       | Google gemini 2.5 pro |
-| Database  | MySQL (Cloud SQL)       |
-| Caching   | Redis                   |
-| Deployment| Docker Compose          |
+| Frontend  | Next.js + Chart.js      |
+| Backend   | Python (Flask)          |
+| LLM       | Google gemini 2.5-flash-preview |
+| Database  | MongoDB Cloud           |
+| Deployment| Vercel (Next.js) & Render.com (Flask) |
 
 ---
 
@@ -34,9 +32,7 @@ DataVizPrompt is an interactive tool that allows users to upload CSV/Excel files
 project-root
 - backend/
     - app.py
-    - docker-compose.yml
     - requirements.txt
-    - Dockerfile
     - .gitignore
 - frontend/
     - src/
@@ -46,6 +42,7 @@ project-root
     - public/
     - components/
         - typewriter-effect.tsx
+        - chart-display.tsx
     - package.json
 
 ## ⚙️ Setup Instructions
@@ -75,26 +72,10 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-#### Start the backend using Docker Compose
-```bash
-docker-compose build --no-cache
-```
-
-#### Start Docker
-```bash
-docker-compose up -d
-```
-
 ### 2. 📁 .env File (place in root or backend)
 ```python
-MYSQL_ROOT_PASSWORD=rootpassword
-
+MONGODB_URI=mongoDB_url_string
 DB_NAME=database_name
-
-MYSQL_USERNAME=user
-
-MYSQL_PASSWORD=password
-
 GOOGLE_API_KEY=your_google_api_key_here
 ```
 
@@ -115,25 +96,17 @@ npm install
 npm run dev
 ```
 
-### 4.🧠 Redis-Based LLM Caching (Backend)
-To reduce LLM cost and latency, prompts are cached in Redis.
-
-#### Start Redis Locally via Docker:
-```bash
-docker run --name redis -p 6379:6379 -d redis
-```
-
-Redis will cache every (prompt + column list) combo and return saved SQL if the same prompt is reused.
-
 ## 🔄 How It Works (System Flow)
-- User uploads a file (CSV/Excel) via frontend
-- Backend parses columns and stores data in Cloud SQL
+- User uploads a file (CSV) via frontend
+- Backend parses columns and stores data in Cloud MongoDB
 - User types a natural query (e.g. "Top 10 albums by streams")
-- LLM converts the query into SQL
-- SQL is cached in Redis if not already present
+- LLM converts the query into MongoDB queries
 - Query is run on database and results returned
-- Frontend renders a chart using Chart.js / Plotly
+- Frontend renders a chart using Chart.js
 
 ## ✅ Future Improvements
 - Role-based login and history tracking
 - Export visualizations as images/PDF
+- Implementation of Redis to cache the results and save LLM load
+- Support files of different extensions
+- Integrate file uploads from Databases 
