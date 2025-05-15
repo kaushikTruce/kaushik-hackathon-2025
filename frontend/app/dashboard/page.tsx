@@ -292,6 +292,13 @@ export default function Dashboard() {
                   </div>
                 </motion.div>
               </div>
+              <motion.div
+                className="mt-4 p-2 bg-gray-100 rounded-lg"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <p className="text-sm text-gray-600">Supported file types: CSV</p>
+              </motion.div>
             </motion.div>
 
             {/* Error Alert */}
